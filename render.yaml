@@ -1,6 +1,6 @@
 services:
   - type: web
-    name: dash-glucose-app
+    name: dash-pa-simulator-app
     env: python
     buildCommand: pip install -r requirements.txt
     startCommand: gunicorn app:server
