@@ -548,28 +548,27 @@ def update_plot(
     )
 
     # update plot aesthetics
-    # fig.update_layout(
-    # paper_bgcolor="#0F203A",
-    # font=dict(family="Basis Grotesque Pro", color="white"),
-    # font=dict(color="white"),
-    # title_font=dict(size=20, color="white"),
-    # legend=dict(
-    #     title=dict(
-    #         text="Key [Target]",  # Your custom legend title
-    #         font=dict(family="Basis Grotesque Pro", size=16, color="white"),
-    #     ),
-    #     bordercolor="white",
-    #     borderwidth=1,
-    #     font=dict(family="Basis Grotesque Pro", color="white", size=16),
-    #     x=1.05,
-    #     y=0.5,
-    #     xanchor="left",
-    #     yanchor="middle",
-    #     # itemclick="toggleothers",
-    # ),
-    # margin=dict(l=50, r=300, t=50, b=50),
-    # legend_tracegroupgap=4,  # Optional: only works if using legend groups
-    # )
+    fig.update_layout(
+        paper_bgcolor="#0F203A",
+        font=dict(family="Basis Grotesque Pro", color="white"),
+        title_font=dict(size=20, color="white"),
+        legend=dict(
+            title=dict(
+                text="Key [Target]",  # Your custom legend title
+                font=dict(family="Basis Grotesque Pro", size=16, color="white"),
+            ),
+            bordercolor="white",
+            borderwidth=1,
+            font=dict(family="Basis Grotesque Pro", color="white", size=16),
+            x=1.05,
+            y=0.5,
+            xanchor="left",
+            yanchor="middle",
+            # itemclick="toggleothers",
+        ),
+        margin=dict(l=50, r=300, t=50, b=50),
+        legend_tracegroupgap=4,  # Optional: only works if using legend groups
+    )
 
     return fig
 
