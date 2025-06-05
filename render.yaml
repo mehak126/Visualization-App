@@ -3,5 +3,5 @@ services:
     name: dash-pa-simulator-app
     env: python
     buildCommand: pip install -r requirements.txt
-    startCommand: gunicorn app:server
+    startCommand: gunicorn my_app:server
     plan: free
