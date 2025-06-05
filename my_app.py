@@ -441,7 +441,7 @@ def update_plot(
             .reset_index()
         )
 
-    df_avg["target"] = df_avg.apply(
+    df_avg["Target"] = df_avg.apply(
         lambda x: f"{x['target_min']}-{x['target_min']+20}", axis=1
     )
     df_avg["size"] = (
@@ -454,17 +454,17 @@ def update_plot(
         df_avg,
         x=x_metric,
         y=y_metric,
-        color="target",
+        color="Target",
         color_discrete_map=color_map,
         size="size",
         size_max=18,
         opacity=0.75,
         title=f"{y_metric} vs {x_metric} for {selected_activity}",
-        hover_data={"label": True, "size": False, "target": False},
+        hover_data={"label": True, "size": False, "Target": False},
     )
 
     # highlight the baseline : default target and 100% preset
-    baseline_df = df_avg[(df_avg["target"] == "100-120") & (df_avg["preset"] == 1.0)]
+    baseline_df = df_avg[(df_avg["Target"] == "100-120") & (df_avg["preset"] == 1.0)]
     fig.add_trace(
         go.Scatter(
             x=baseline_df[x_metric],
@@ -484,7 +484,7 @@ def update_plot(
 
     # highlight the raised target with 100% preset point
     raised_target_df = df_avg[
-        (df_avg["target"] == "150-170") & (df_avg["preset"] == 1.0)
+        (df_avg["Target"] == "150-170") & (df_avg["preset"] == 1.0)
     ]
     fig.add_trace(
         go.Scatter(
@@ -506,7 +506,7 @@ def update_plot(
     # highlight the preset only data point
     preset_only_df = df_avg[
         (df_avg["preset"] == t1dexi_presets[selected_activity])
-        & (df_avg["target"] == "100-120")
+        & (df_avg["Target"] == "100-120")
     ]
     fig.add_trace(
         go.Scatter(
@@ -527,7 +527,7 @@ def update_plot(
 
     # highlight the raised target + T1DEXI preset point
     preset_and_raised_target_df = df_avg[
-        (df_avg["target"] == "150-170")
+        (df_avg["Target"] == "150-170")
         & (df_avg["preset"] == t1dexi_presets[selected_activity])
     ]
     fig.add_trace(
@@ -548,27 +548,28 @@ def update_plot(
     )
 
     # update plot aesthetics
-    fig.update_layout(
-        paper_bgcolor="#0F203A",
-        font=dict(family="Basis Grotesque Pro", color="white"),
-        title_font=dict(size=20, color="white"),
-        legend=dict(
-            title=dict(
-                text="Key [Target]",  # Your custom legend title
-                font=dict(family="Basis Grotesque Pro", size=16, color="white"),
-            ),
-            bordercolor="white",
-            borderwidth=1,
-            font=dict(family="Basis Grotesque Pro", color="white", size=16),
-            x=1.05,
-            y=0.5,
-            xanchor="left",
-            yanchor="middle",
-            # itemclick="toggleothers",
-        ),
-        margin=dict(l=50, r=300, t=50, b=50),
-        legend_tracegroupgap=4,  # Optional: only works if using legend groups
-    )
+    # fig.update_layout(
+    # paper_bgcolor="#0F203A",
+    # font=dict(family="Basis Grotesque Pro", color="white"),
+    # font=dict(color="white"),
+    # title_font=dict(size=20, color="white"),
+    # legend=dict(
+    #     title=dict(
+    #         text="Key [Target]",  # Your custom legend title
+    #         font=dict(family="Basis Grotesque Pro", size=16, color="white"),
+    #     ),
+    #     bordercolor="white",
+    #     borderwidth=1,
+    #     font=dict(family="Basis Grotesque Pro", color="white", size=16),
+    #     x=1.05,
+    #     y=0.5,
+    #     xanchor="left",
+    #     yanchor="middle",
+    #     # itemclick="toggleothers",
+    # ),
+    # margin=dict(l=50, r=300, t=50, b=50),
+    # legend_tracegroupgap=4,  # Optional: only works if using legend groups
+    # )
 
     return fig
 
