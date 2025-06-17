@@ -74,7 +74,7 @@ Further, to visualize metrics across multiple sessions, two aggregation approach
 To launch the visualization tool, run the following command:
 
 ```bash
-python visualize_results.py
+python my_app.py
 ```
 
 After running the script, open the address displayed in your terminal in a web browser.

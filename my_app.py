@@ -80,6 +80,7 @@ app.layout = dbc.Container(
     [
         dbc.Row(
             [
+                # Left column: heading and popover
                 dbc.Col(
                     html.Div(
                         [
@@ -108,7 +109,7 @@ app.layout = dbc.Container(
                                             "This tool is used for visualizing the impact of preset- and target-based insulin interventions during simulated physical activity (PA) in individuals with type 1 diabetes."
                                         ),
                                         html.P(
-                                            "Developed by UC Santa Barbara in collaboration with University of Pavia, Stanford Health, and Tidepool."
+                                            "Developed by UC Santa Barbara in collaboration with University of Pavia, Stanford Health, Tidepool, and York University."
                                         ),
                                     ]
                                 ),
@@ -118,8 +119,37 @@ app.layout = dbc.Container(
                             ),
                         ]
                     ),
-                    width=14,
-                )
+                    width=10,
+                ),
+                dbc.Col(
+                    html.Div(
+                        [
+                            html.P(
+                                "Designed by",
+                                style={
+                                    "textAlign": "right",
+                                    "marginTop": "1rem",
+                                    "marginBottom": "1rem",
+                                    "color": "white",
+                                    "fontSize": "1.1rem",
+                                    "fontWeight": "bold",
+                                    "fontFamily": "Basis Grotesque Pro",
+                                },
+                            ),
+                            html.Img(
+                                src="/assets/ucsb-white.png",
+                                style={
+                                    "width": "160px",
+                                    "height": "14px",
+                                    "float": "right",
+                                },
+                            ),
+                        ],
+                        style={"textAlign": "right"},
+                    ),
+                    width=2,
+                    align="start",
+                ),
             ],
             className="mb-4",
         ),
@@ -134,7 +164,26 @@ app.layout = dbc.Container(
                             "marginBottom": "1rem",
                         },
                     )
-                )
+                ),
+                dbc.Col(
+                    html.Div(
+                        [
+                            html.P(
+                                "In partnership with",
+                                style={
+                                    "textAlign": "right",
+                                    "color": "white",
+                                    "fontSize": "1.1rem",
+                                    "fontWeight": "bold",
+                                    "fontFamily": "Basis Grotesque Pro",
+                                },
+                            ),
+                        ],
+                        style={"textAlign": "right"},
+                    ),
+                    width=2,
+                    align="start",
+                ),
             ],
             className="ms-5",
         ),
@@ -209,6 +258,23 @@ app.layout = dbc.Container(
                         ),
                     ],
                     width=2,
+                ),
+                dbc.Col(width=3),
+                dbc.Col(
+                    html.Div(
+                        [
+                            html.Img(
+                                src="/assets/pavia-white.png",
+                                style={
+                                    "width": "100px",
+                                    # "height": "12px",
+                                    "float": "right",
+                                },
+                            ),
+                        ],
+                        style={"textAlign": "right"},
+                    ),
+                    width=1,
                 ),
             ],
             className="ms-5 mt-2",
@@ -285,6 +351,23 @@ app.layout = dbc.Container(
                     ],
                     width=2,
                 ),
+                dbc.Col(width=3),
+                dbc.Col(
+                    html.Div(
+                        [
+                            html.Img(
+                                src="/assets/stanford-medicine-white.png",
+                                style={
+                                    "width": "160px",
+                                    "height": "22px",
+                                    "float": "right",
+                                },
+                            ),
+                        ],
+                        style={"textAlign": "right"},
+                    ),
+                    width=1,
+                ),
             ],
             className="ms-5 mt-2",
         ),
@@ -334,6 +417,32 @@ app.layout = dbc.Container(
                         ),
                     ],
                     width=2,
+                ),
+                dbc.Col(width=5),
+                dbc.Col(
+                    html.Div(
+                        [
+                            html.Img(
+                                src="/assets/tidepool-white.png",
+                                style={
+                                    "width": "140px",
+                                    "height": "16px",
+                                    "float": "right",
+                                },
+                            ),
+                            html.Img(
+                                src="/assets/yorku-white.png",
+                                style={
+                                    "width": "120px",
+                                    # "height": "10px",
+                                    "float": "right",
+                                    "marginTop": "2rem",
+                                },
+                            ),
+                        ],
+                        style={"textAlign": "right"},
+                    ),
+                    width=1,
                 ),
             ],
             className="ms-5 mt-2",
@@ -567,7 +676,7 @@ def update_plot(
             # itemclick="toggleothers",
         ),
         margin=dict(l=50, r=300, t=50, b=50),
-        legend_tracegroupgap=4,  # Optional: only works if using legend groups
+        legend_tracegroupgap=4,
     )
 
     return fig
