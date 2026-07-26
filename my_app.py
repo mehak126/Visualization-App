@@ -1,3 +1,5 @@
+import os
+from functools import lru_cache
 import dash
 from dash import dcc, html
 from dash.dependencies import Input, Output
@@ -71,6 +73,25 @@ sample_points = [
 ]  # sample points for the target-based color map
 colors = sample_colorscale("Blues", sample_points)
 color_map = dict(zip(target_labels, colors))
+
+
+# --- CSV caching -----------------------------------------------------------
+# The callback below only ever loads files keyed by (noise, eval_start,
+# eval_end); every other dropdown just filters data already in memory. So we
+# cache the parsed DataFrames and avoid re-reading/re-parsing from disk on
+# every interaction. This is the main fix for slow performance on low-CPU
+# hosts. maxsize=16 keeps memory bounded on a 512 MB instance; load_csv()
+# returns a .copy() so the callback's in-place mutations never corrupt the
+# cached object.
+@lru_cache(maxsize=16)
+def _read_raw(path):
+    return pd.read_csv(path, names=col_names, header=None)
+
+
+def load_csv(path):
+    return _read_raw(path).copy()
+# ---------------------------------------------------------------------------
+
 
 # visualization app code
 app = dash.Dash(__name__, external_stylesheets=[dbc.themes.BOOTSTRAP])
@@ -487,20 +508,14 @@ def update_plot(
     if noise == "all":
         all_dfs = []
         for noise_level in ["nonoise", "samplednoise", "fullnoise"]:
-            df = pd.read_csv(
-                f"./data/03_13_{noise_level}_{eval_start}_{eval_end}.csv",
-                names=col_names,
-                header=None,
+            df = load_csv(
+                f"./data/03_13_{noise_level}_{eval_start}_{eval_end}.csv"
             )
             df["noise"] = noise_level
             all_dfs.append(df)
         df = pd.concat(all_dfs, ignore_index=True)
     else:
-        df = pd.read_csv(
-            f"./data/03_13_{noise}_{eval_start}_{eval_end}.csv",
-            names=col_names,
-            header=None,
-        )
+        df = load_csv(f"./data/03_13_{noise}_{eval_start}_{eval_end}.csv")
     df["activity"] = df["activity"].replace(
         "rength training", "strength training"
     )  # fix typo in results df
@@ -568,7 +583,7 @@ def update_plot(
         size="size",
         size_max=18,
         opacity=0.75,
-        title=f"{y_metric} vs {x_metric} for {selected_activity}",
+        title=f"{y_metric} vs {x_metric} for {selected_activity.capitalize()}",
         hover_data={"label": True, "size": False, "Target": False},
     )
 
@@ -578,7 +593,7 @@ def update_plot(
         go.Scatter(
             x=baseline_df[x_metric],
             y=baseline_df[y_metric],
-            name="No Action<br><sub>Default target 100-120, Preset 100%</sub>",
+            name="No Action<br><sub>Target 100-120, Preset 100%</sub>",
             mode="markers",
             marker=dict(symbol="diamond", color="#A1BB97", size=14, line=dict(width=0)),
             customdata=baseline_df[["label"]],
@@ -621,7 +636,7 @@ def update_plot(
         go.Scatter(
             x=preset_only_df[x_metric],
             y=preset_only_df[y_metric],
-            name=f"Preset Only<br><sub>Default target 100-120, T1DEXI Preset {int(t1dexi_presets[selected_activity]*100)}%</sub>",
+            name=f"Preset Only<br><sub>Target 100-120, Activity Preset {int(t1dexi_presets[selected_activity]*100)}%</sub>",
             mode="markers",
             marker=dict(symbol="star", color="#D4938B", size=18, line=dict(width=0)),
             customdata=preset_only_df[["label"]],
@@ -643,7 +658,7 @@ def update_plot(
         go.Scatter(
             x=preset_and_raised_target_df[x_metric],
             y=preset_and_raised_target_df[y_metric],
-            name=f"Preset + Raised Target<br><sub>Target 150-170, Preset {int(t1dexi_presets[selected_activity]*100)}%</sub>",
+            name=f"Preset + Raised Target<br><sub>Target 150-170, Activity Preset {int(t1dexi_presets[selected_activity]*100)}%</sub>",
             mode="markers",
             marker=dict(symbol="star", color="pink", size=18, line=dict(width=0)),
             customdata=preset_and_raised_target_df[["label"]],

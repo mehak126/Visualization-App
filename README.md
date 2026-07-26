@@ -1,4 +1,6 @@
-# T1D-PA-Intervention-Visualization
+# [T1D-PA-Intervention-Visualization](https://t1d-pa-visualization-app.onrender.com/)
+
+[![Deployed on Render](https://img.shields.io/badge/Deployed%20on-Render-00B3FF?logo=render&logoColor=white)](https://t1d-pa-visualization-app.onrender.com/)
 
 This repository provides a script for visualizing the effects of preset- and target-based insulin interventions during physical activity (PA) in individuals with type 1 diabetes.
 
@@ -118,6 +120,10 @@ Individual areas of the plot can also be zoomed in to facilitate finer analysis.
 </p>
 
 **Figure 3:** Example of zooming into specific areas in the plot.
+
+[\n]## Deployment
+
+The visualization app is deployed on Render and available at: https://t1d-pa-visualization-app.onrender.com/
 
 ## References
 [1] Riddell, Michael C., et al. "Examining the acute glycemic effects of different types of structured exercise sessions in type 1 diabetes in a real-world setting: the type 1 diabetes and exercise initiative (T1DEXI)." Diabetes care 46.4 (2023): 704-713.
