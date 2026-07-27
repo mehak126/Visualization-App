@@ -4,6 +4,8 @@ from pathlib import Path
 import dash
 from dash import dcc, html
 from dash.dependencies import Input, Output
+import time
+import threading
 import pandas as pd
 import plotly.express as px
 import dash_bootstrap_components as dbc
@@ -123,9 +125,100 @@ warm_csv_cache()
 # ---------------------------------------------------------------------------
 
 
+# Cache aggregated/filtered DataFrames keyed by the visualization inputs.
+# This avoids re-running groupby/weighting code on every callback invocation
+# when the same parameter combination is requested multiple times.
+@lru_cache(maxsize=128)
+def get_aggregated_df(
+    selected_activity,
+    pa_duration,
+    noise,
+    max_netiob,
+    averaging,
+    min_glucose,
+    max_glucose,
+    eval_start,
+    eval_end,
+):
+    if noise == "all":
+        all_dfs = []
+        for noise_level in ["nonoise", "samplednoise", "fullnoise"]:
+            df = load_csv(f"./data/03_13_{noise_level}_{eval_start}_{eval_end}.csv")
+            df["noise"] = noise_level
+            all_dfs.append(df)
+        df = pd.concat(all_dfs, ignore_index=True)
+    else:
+        df = load_csv(f"./data/03_13_{noise}_{eval_start}_{eval_end}.csv")
+
+    df_filtered = df[
+        (df["activity"] == selected_activity)
+        & (df["netIoB"] <= int(max_netiob))
+        & ((df["pa_duration"] == (int(pa_duration) if pa_duration != "all" else pa_duration)) if pa_duration != "all" else True)
+        & (df["starting_glucose"] >= int(min_glucose))
+        & (df["starting_glucose"] <= int(max_glucose))
+        & (df["target_min"] < 180)
+    ]
+
+    df_filtered = df_filtered[metrics_list + ["label", "weight", "target_min", "preset"]]
+
+    if averaging == "Unweighted":
+        df_avg = (
+            df_filtered.groupby(["label", "target_min", "preset"], as_index=False)[metrics_list]
+            .mean()
+        )
+    else:
+        weighted_df = df_filtered.copy()
+        for metric in metrics_list:
+            weighted_df[f"{metric}_w"] = weighted_df[metric] * weighted_df["weight"]
+
+        agg_dict = {f"{metric}_w": "sum" for metric in metrics_list}
+        agg_dict["weight"] = "sum"
+        agg_dict["preset"] = "first"
+        agg_dict["target_min"] = "first"
+        agg_dict["label"] = "first"
+
+        weighted_agg = weighted_df.groupby(["label", "target_min", "preset"], as_index=False).agg(agg_dict)
+
+        for metric in metrics_list:
+            weighted_agg[metric] = (weighted_agg[f"{metric}_w"] / weighted_agg["weight"])
+            weighted_agg.drop(columns=[f"{metric}_w"], inplace=True)
+
+        df_avg = weighted_agg[["label", "target_min", "preset"] + metrics_list]
+
+    df_avg["Target"] = df_avg["target_min"].astype(str) + "-" + (df_avg["target_min"] + 20).astype(str)
+    df_avg["size"] = df_avg["preset"] * 100
+    df_avg = df_avg.round(2)
+
+    # return a copy so callers can mutate without affecting the cached object
+    return df_avg.copy()
+
+
+
 # visualization app code
 app = dash.Dash(__name__, external_stylesheets=[dbc.themes.BOOTSTRAP])
 server = app.server
+
+# simple in-process TTL cache to avoid external dependencies.
+# Note: this cache is per-process and will not be shared across multiple gunicorn
+# workers. For multi-worker deployments, use Redis/Memcached instead.
+_simple_cache = {}
+_simple_cache_lock = threading.Lock()
+
+def cache_get(key):
+    with _simple_cache_lock:
+        entry = _simple_cache.get(key)
+        if not entry:
+            return None
+        expires_at, value = entry
+        if expires_at is not None and time.time() > expires_at:
+            del _simple_cache[key]
+            return None
+        return value
+
+def cache_set(key, value, timeout=300):
+    expires_at = time.time() + timeout if timeout else None
+    with _simple_cache_lock:
+        _simple_cache[key] = (expires_at, value)
 
 app.layout = dbc.Container(
     [
@@ -540,72 +633,28 @@ def update_plot(
     eval_start,
     eval_end,
 ):
-    if noise == "all":
-        all_dfs = []
-        for noise_level in ["nonoise", "samplednoise", "fullnoise"]:
-            df = load_csv(
-                f"./data/03_13_{noise_level}_{eval_start}_{eval_end}.csv"
-            )
-            df["noise"] = noise_level
-            all_dfs.append(df)
-        df = pd.concat(all_dfs, ignore_index=True)
-    else:
-        df = load_csv(f"./data/03_13_{noise}_{eval_start}_{eval_end}.csv")
-
-    # filter df based on set parameters in the visualization.
-    df_filtered = df[
-        (df["activity"] == selected_activity)
-        & (df["netIoB"] <= max_netiob)
-        & ((df["pa_duration"] == pa_duration) if pa_duration != "all" else True)
-        & (df["starting_glucose"] >= min_glucose)
-        & (df["starting_glucose"] <= max_glucose)
-        & (df["target_min"] < 180)
-    ]
-
-    df_filtered = df_filtered[
-        metrics_list + ["label", "weight", "target_min", "preset"]
-    ]
-
-    if averaging == "Unweighted":
-        df_avg = (
-            df_filtered.groupby(["label", "target_min", "preset"], as_index=False)[
-                metrics_list
-            ]
-            .mean()
-        )
-    else:
-        weighted_df = df_filtered.copy()
-        for metric in metrics_list:
-            weighted_df[f"{metric}_w"] = weighted_df[metric] * weighted_df["weight"]
-
-        agg_dict = {f"{metric}_w": "sum" for metric in metrics_list}
-        agg_dict["weight"] = "sum"
-        agg_dict["preset"] = "first"
-        agg_dict["target_min"] = "first"
-        agg_dict["label"] = "first"
-
-        weighted_agg = weighted_df.groupby(
-            ["label", "target_min", "preset"], as_index=False
-        ).agg(agg_dict)
-
-        for metric in metrics_list:
-            weighted_agg[metric] = (
-                weighted_agg[f"{metric}_w"] / weighted_agg["weight"]
-            )
-            weighted_agg.drop(columns=[f"{metric}_w"], inplace=True)
-
-        df_avg = weighted_agg[["label", "target_min", "preset"] + metrics_list]
-
-    df_avg["Target"] = (
-        df_avg["target_min"].astype(str)
-        + "-"
-        + (df_avg["target_min"] + 20).astype(str)
+    # Try to fetch a full figure from the server-side cache. The cache key
+    # encodes user choices so repeated identical requests are served quickly.
+    cache_key = (
+        f"fig:{selected_activity}:{pa_duration}:{noise}:{x_metric}:{y_metric}:{max_netiob}:{averaging}:{min_glucose}:{max_glucose}:{eval_start}:{eval_end}"
     )
-    df_avg["size"] = (
-        df_avg["preset"] * 100
-    )  # for setting the size of the scatter points based on the preset
 
-    df_avg = df_avg.round(2)
+    cached_fig = cache_get(cache_key)
+    if cached_fig is not None:
+        return cached_fig
+
+    # Use cached aggregation to avoid repeated groupby/weight work.
+    df_avg = get_aggregated_df(
+        selected_activity,
+        pa_duration,
+        noise,
+        max_netiob,
+        averaging,
+        min_glucose,
+        max_glucose,
+        eval_start,
+        eval_end,
+    )
 
     # Exclude highlighted special points from the base scatter so they render on top.
     highlight_mask = (
@@ -646,9 +695,7 @@ def update_plot(
             ),
             customdata=baseline_df[["label"]],
             hovertemplate=(
-                f"{x_metric}: {baseline_df[x_metric].iloc[0]:.2f}<br>"
-                f"{y_metric}: {baseline_df[y_metric].iloc[0]:.2f}<br>"
-                "%{customdata[0]}<extra></extra>"
+                f"{x_metric}: %{{x:.2f}}<br>{y_metric}: %{{y:.2f}}<br>%{{customdata[0]}}<extra></extra>"
             ),
             showlegend=True,
         )
@@ -672,9 +719,7 @@ def update_plot(
             ),
             customdata=raised_target_df[["label"]],
             hovertemplate=(
-                f"{x_metric}: {raised_target_df[x_metric].iloc[0]:.2f}<br>"
-                f"{y_metric}: {raised_target_df[y_metric].iloc[0]:.2f}<br>"
-                "%{customdata[0]}<extra></extra>"
+                f"{x_metric}: %{{x:.2f}}<br>{y_metric}: %{{y:.2f}}<br>%{{customdata[0]}}<extra></extra>"
             ),
             showlegend=True,
         )
@@ -699,9 +744,7 @@ def update_plot(
             ),
             customdata=preset_only_df[["label"]],
             hovertemplate=(
-                f"{x_metric}: {preset_only_df[x_metric].iloc[0]:.2f}<br>"
-                f"{y_metric}: {preset_only_df[y_metric].iloc[0]:.2f}<br>"
-                "%{customdata[0]}<extra></extra>"
+                f"{x_metric}: %{{x:.2f}}<br>{y_metric}: %{{y:.2f}}<br>%{{customdata[0]}}<extra></extra>"
             ),
             showlegend=True,
         )
@@ -726,9 +769,7 @@ def update_plot(
             ),
             customdata=preset_and_raised_target_df[["label"]],
             hovertemplate=(
-                f"{x_metric}: {preset_and_raised_target_df[x_metric].iloc[0]:.2f}<br>"
-                f"{y_metric}: {preset_and_raised_target_df[y_metric].iloc[0]:.2f}<br>"
-                "%{customdata[0]}<extra></extra>"
+                f"{x_metric}: %{{x:.2f}}<br>{y_metric}: %{{y:.2f}}<br>%{{customdata[0]}}<extra></extra>"
             ),
             showlegend=True,
         )
@@ -756,6 +797,12 @@ def update_plot(
         margin=dict(l=50, r=300, t=50, b=50),
         legend_tracegroupgap=4,
     )
+
+    # cache the constructed figure for subsequent identical requests
+    try:
+        cache_set(cache_key, fig, timeout=300)
+    except Exception:
+        pass
 
     return fig
 
