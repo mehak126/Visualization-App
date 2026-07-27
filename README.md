@@ -1,4 +1,4 @@
-# [T1D-PA-Intervention-Visualization](https://t1d-pa-visualization-app.onrender.com/)
+# T1D-PA-Intervention-Visualization
 
 [![Deployed on Render](https://img.shields.io/badge/Deployed%20on-Render-00B3FF?logo=render&logoColor=white)](https://t1d-pa-visualization-app.onrender.com/)
 

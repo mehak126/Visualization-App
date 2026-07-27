@@ -1,5 +1,6 @@
 import os
 from functools import lru_cache
+from pathlib import Path
 import dash
 from dash import dcc, html
 from dash.dependencies import Input, Output
@@ -85,11 +86,40 @@ color_map = dict(zip(target_labels, colors))
 # cached object.
 @lru_cache(maxsize=16)
 def _read_raw(path):
-    return pd.read_csv(path, names=col_names, header=None)
+    df = pd.read_csv(path, names=col_names, header=None)
+    df["activity"] = df["activity"].replace("rength training", "strength training")
+    df["weight"] = lognorm.pdf(
+        np.array(df["starting_glucose"]), s=sigma, scale=np.exp(mu)
+    )
+    df["label"] = (
+        "Target: "
+        + df["target_min"].astype(str)
+        + "-"
+        + df["target_max"].astype(str)
+        + "\nPreset: "
+        + (df["preset"] * 100).astype(int).astype(str)
+        + "%"
+    )
+    df["Target"] = df["target_min"].astype(str) + "-" + (df["target_min"] + 20).astype(str)
+    return df
 
 
 def load_csv(path):
     return _read_raw(path).copy()
+
+
+def warm_csv_cache():
+    data_dir = Path("./data")
+    if not data_dir.exists():
+        return
+    for path in sorted(data_dir.glob("*.csv")):
+        try:
+            load_csv(str(path))
+        except Exception:
+            pass
+
+# pre-warm the CSV cache on startup so the first interactive request is faster.
+warm_csv_cache()
 # ---------------------------------------------------------------------------
 
 
@@ -469,7 +499,12 @@ app.layout = dbc.Container(
             className="ms-5 mt-2",
         ),
         dbc.Col(
-            dcc.Graph(id="scatter-plot", style={"height": "500px"}),
+            dcc.Loading(
+                dcc.Graph(id="scatter-plot", style={"height": "500px"}),
+                type="circle",
+                color="#ffffff",
+                fullscreen=False,
+            ),
             width=10,
             className="ms-5 mt-5",
         ),
@@ -516,16 +551,6 @@ def update_plot(
         df = pd.concat(all_dfs, ignore_index=True)
     else:
         df = load_csv(f"./data/03_13_{noise}_{eval_start}_{eval_end}.csv")
-    df["activity"] = df["activity"].replace(
-        "rength training", "strength training"
-    )  # fix typo in results df
-    df["weight"] = lognorm.pdf(
-        np.array(df["starting_glucose"]), s=sigma, scale=np.exp(mu)
-    )  # weight of each simulation based on starting glucose
-    df["label"] = df.apply(
-        lambda x: f"Target: {x['target_min']}-{x['target_max']}\nPreset: {int(x['preset']*100)}%",
-        axis=1,
-    )  # label to display in the plot
 
     # filter df based on set parameters in the visualization.
     df_filtered = df[
@@ -543,30 +568,38 @@ def update_plot(
 
     if averaging == "Unweighted":
         df_avg = (
-            df_filtered.groupby(["label", "target_min", "preset"], as_index=False)
+            df_filtered.groupby(["label", "target_min", "preset"], as_index=False)[
+                metrics_list
+            ]
             .mean()
-            .reset_index()
         )
     else:
-        df_avg = (
-            df_filtered.groupby(["label", "target_min", "preset"], as_index=False)
-            .apply(
-                lambda g: pd.Series(
-                    np.average(
-                        g.drop(columns=["label", "weight", "target_min", "preset"]),
-                        weights=g["weight"],
-                        axis=0,
-                    ),
-                    index=g.drop(
-                        columns=["label", "weight", "target_min", "preset"]
-                    ).columns,
-                )
-            )
-            .reset_index()
-        )
+        weighted_df = df_filtered.copy()
+        for metric in metrics_list:
+            weighted_df[f"{metric}_w"] = weighted_df[metric] * weighted_df["weight"]
 
-    df_avg["Target"] = df_avg.apply(
-        lambda x: f"{x['target_min']}-{x['target_min']+20}", axis=1
+        agg_dict = {f"{metric}_w": "sum" for metric in metrics_list}
+        agg_dict["weight"] = "sum"
+        agg_dict["preset"] = "first"
+        agg_dict["target_min"] = "first"
+        agg_dict["label"] = "first"
+
+        weighted_agg = weighted_df.groupby(
+            ["label", "target_min", "preset"], as_index=False
+        ).agg(agg_dict)
+
+        for metric in metrics_list:
+            weighted_agg[metric] = (
+                weighted_agg[f"{metric}_w"] / weighted_agg["weight"]
+            )
+            weighted_agg.drop(columns=[f"{metric}_w"], inplace=True)
+
+        df_avg = weighted_agg[["label", "target_min", "preset"] + metrics_list]
+
+    df_avg["Target"] = (
+        df_avg["target_min"].astype(str)
+        + "-"
+        + (df_avg["target_min"] + 20).astype(str)
     )
     df_avg["size"] = (
         df_avg["preset"] * 100
@@ -574,8 +607,17 @@ def update_plot(
 
     df_avg = df_avg.round(2)
 
+    # Exclude highlighted special points from the base scatter so they render on top.
+    highlight_mask = (
+        ((df_avg["Target"] == "100-120") & (df_avg["preset"] == 1.0))
+        | ((df_avg["Target"] == "150-170") & (df_avg["preset"] == 1.0))
+        | ((df_avg["Target"] == "100-120") & (df_avg["preset"] == t1dexi_presets[selected_activity]))
+        | ((df_avg["Target"] == "150-170") & (df_avg["preset"] == t1dexi_presets[selected_activity]))
+    )
+    base_df = df_avg[~highlight_mask]
+
     fig = px.scatter(
-        df_avg,
+        base_df,
         x=x_metric,
         y=y_metric,
         color="Target",
@@ -585,17 +627,23 @@ def update_plot(
         opacity=0.75,
         title=f"{y_metric} vs {x_metric} for {selected_activity.capitalize()}",
         hover_data={"label": True, "size": False, "Target": False},
+        render_mode="webgl",
     )
 
     # highlight the baseline : default target and 100% preset
     baseline_df = df_avg[(df_avg["Target"] == "100-120") & (df_avg["preset"] == 1.0)]
     fig.add_trace(
-        go.Scatter(
+        go.Scattergl(
             x=baseline_df[x_metric],
             y=baseline_df[y_metric],
             name="No Action<br><sub>Target 100-120, Preset 100%</sub>",
             mode="markers",
-            marker=dict(symbol="diamond", color="#A1BB97", size=14, line=dict(width=0)),
+            marker=dict(
+                symbol="diamond",
+                color="#A1BB97",
+                size=14,
+                line=dict(width=2, color="#7A8F74"),
+            ),
             customdata=baseline_df[["label"]],
             hovertemplate=(
                 f"{x_metric}: {baseline_df[x_metric].iloc[0]:.2f}<br>"
@@ -611,12 +659,17 @@ def update_plot(
         (df_avg["Target"] == "150-170") & (df_avg["preset"] == 1.0)
     ]
     fig.add_trace(
-        go.Scatter(
+        go.Scattergl(
             x=raised_target_df[x_metric],
             y=raised_target_df[y_metric],
             name="Raised Target<br><sub>Target 150-170, Preset 100%</sub>",
             mode="markers",
-            marker=dict(symbol="diamond", color="#E5CFA4", size=14, line=dict(width=0)),
+            marker=dict(
+                symbol="diamond",
+                color="#E5CFA4",
+                size=14,
+                line=dict(width=2, color="#C9B08C"),
+            ),
             customdata=raised_target_df[["label"]],
             hovertemplate=(
                 f"{x_metric}: {raised_target_df[x_metric].iloc[0]:.2f}<br>"
@@ -633,12 +686,17 @@ def update_plot(
         & (df_avg["Target"] == "100-120")
     ]
     fig.add_trace(
-        go.Scatter(
+        go.Scattergl(
             x=preset_only_df[x_metric],
             y=preset_only_df[y_metric],
             name=f"Preset Only<br><sub>Target 100-120, Activity Preset {int(t1dexi_presets[selected_activity]*100)}%</sub>",
             mode="markers",
-            marker=dict(symbol="star", color="#D4938B", size=18, line=dict(width=0)),
+            marker=dict(
+                symbol="star",
+                color="#D4938B",
+                size=18,
+                line=dict(width=2, color="#A86E60"),
+            ),
             customdata=preset_only_df[["label"]],
             hovertemplate=(
                 f"{x_metric}: {preset_only_df[x_metric].iloc[0]:.2f}<br>"
@@ -655,12 +713,17 @@ def update_plot(
         & (df_avg["preset"] == t1dexi_presets[selected_activity])
     ]
     fig.add_trace(
-        go.Scatter(
+        go.Scattergl(
             x=preset_and_raised_target_df[x_metric],
             y=preset_and_raised_target_df[y_metric],
             name=f"Preset + Raised Target<br><sub>Target 150-170, Activity Preset {int(t1dexi_presets[selected_activity]*100)}%</sub>",
             mode="markers",
-            marker=dict(symbol="star", color="pink", size=18, line=dict(width=0)),
+            marker=dict(
+                symbol="star",
+                color="pink",
+                size=18,
+                line=dict(width=2, color="#C17FA0"),
+            ),
             customdata=preset_and_raised_target_df[["label"]],
             hovertemplate=(
                 f"{x_metric}: {preset_and_raised_target_df[x_metric].iloc[0]:.2f}<br>"
@@ -698,4 +761,8 @@ def update_plot(
 
 
 if __name__ == "__main__":
-    app.run(debug=True)
+    app.run(
+        host="0.0.0.0",
+        port=int(os.environ.get("PORT", 8080)),
+        debug=False,
+    )
