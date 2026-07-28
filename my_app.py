@@ -52,6 +52,34 @@ metrics_list = [
     "Magni Risk",
 ]
 
+# Columns actually read from the CSVs. The raw files carry several columns
+# (sim_condition, vp_index, noise_condition, del_g, basal, bolus, and the
+# metrics_list-adjacent bins) that are never used anywhere downstream; on a
+# 512MB instance loading them just to discard them is wasted memory, so we
+# use usecols to skip them at parse time.
+usecols = [
+    "starting_glucose",
+    "netIoB",
+    "pa_duration",
+    "activity",
+    "preset",
+    "target_min",
+    "target_max",
+] + metrics_list
+
+# dtypes sized to the actual value ranges (small ints, 4-byte floats,
+# category for the low-cardinality activity column) instead of pandas'
+# default int64/float64/object, which cuts per-file memory ~4x.
+dtype_map = {
+    "starting_glucose": "int16",
+    "netIoB": "int8",
+    "pa_duration": "int16",
+    "preset": "float32",
+    "target_min": "int16",
+    "target_max": "int16",
+    **{metric: "float32" for metric in metrics_list},
+}
+
 t1dexi_presets = {
     "walking": 0.2,
     "biking": 0.2,
@@ -83,26 +111,26 @@ color_map = dict(zip(target_labels, colors))
 # eval_end); every other dropdown just filters data already in memory. So we
 # cache the parsed DataFrames and avoid re-reading/re-parsing from disk on
 # every interaction. This is the main fix for slow performance on low-CPU
-# hosts. maxsize=16 keeps memory bounded on a 512 MB instance; load_csv()
+# hosts. maxsize=8 keeps memory bounded on a 512 MB instance; load_csv()
 # returns a .copy() so the callback's in-place mutations never corrupt the
 # cached object.
-@lru_cache(maxsize=16)
+#
+# The raw frame intentionally does NOT carry "label"/"Target" strings: those
+# are derived 1:1 from (target_min, target_max, preset) and only ever
+# survive a groupby as an aggregation key, so building them per-row on the
+# full ~48k-row raw frame (and keeping that string data alive in the cache
+# for as long as the file is cached) is wasted memory. They're built once on
+# the small post-aggregation frame in get_aggregated_df instead.
+@lru_cache(maxsize=8)
 def _read_raw(path):
-    df = pd.read_csv(path, names=col_names, header=None)
+    df = pd.read_csv(
+        path, names=col_names, header=None, usecols=usecols, dtype=dtype_map
+    )
     df["activity"] = df["activity"].replace("rength training", "strength training")
+    df["activity"] = df["activity"].astype("category")
     df["weight"] = lognorm.pdf(
         np.array(df["starting_glucose"]), s=sigma, scale=np.exp(mu)
-    )
-    df["label"] = (
-        "Target: "
-        + df["target_min"].astype(str)
-        + "-"
-        + df["target_max"].astype(str)
-        + "\nPreset: "
-        + (df["preset"] * 100).astype(int).astype(str)
-        + "%"
-    )
-    df["Target"] = df["target_min"].astype(str) + "-" + (df["target_min"] + 20).astype(str)
+    ).astype("float32")
     return df
 
 
@@ -111,10 +139,16 @@ def load_csv(path):
 
 
 def warm_csv_cache():
+    # Only pre-warm the files needed for the default dropdown selections
+    # (noise="all" -> all 3 noise levels, eval_start/eval_end defaults).
+    # Eagerly parsing every CSV in ./data at startup (36 files) exceeded the
+    # 512MB Render free-tier limit for no benefit, since only `maxsize`
+    # of them survive in the cache anyway and the rest are evicted unused.
     data_dir = Path("./data")
     if not data_dir.exists():
         return
-    for path in sorted(data_dir.glob("*.csv")):
+    for noise_level in ["nonoise", "samplednoise", "fullnoise"]:
+        path = data_dir / f"03_13_{noise_level}_activity_start_3hr_after.csv"
         try:
             load_csv(str(path))
         except Exception:
@@ -141,11 +175,10 @@ def get_aggregated_df(
     eval_end,
 ):
     if noise == "all":
-        all_dfs = []
-        for noise_level in ["nonoise", "samplednoise", "fullnoise"]:
-            df = load_csv(f"./data/03_13_{noise_level}_{eval_start}_{eval_end}.csv")
-            df["noise"] = noise_level
-            all_dfs.append(df)
+        all_dfs = [
+            load_csv(f"./data/03_13_{noise_level}_{eval_start}_{eval_end}.csv")
+            for noise_level in ["nonoise", "samplednoise", "fullnoise"]
+        ]
         df = pd.concat(all_dfs, ignore_index=True)
     else:
         df = load_csv(f"./data/03_13_{noise}_{eval_start}_{eval_end}.csv")
@@ -159,11 +192,13 @@ def get_aggregated_df(
         & (df["target_min"] < 180)
     ]
 
-    df_filtered = df_filtered[metrics_list + ["label", "weight", "target_min", "preset"]]
+    df_filtered = df_filtered[metrics_list + ["weight", "target_min", "target_max", "preset"]]
+
+    group_keys = ["target_min", "target_max", "preset"]
 
     if averaging == "Unweighted":
         df_avg = (
-            df_filtered.groupby(["label", "target_min", "preset"], as_index=False)[metrics_list]
+            df_filtered.groupby(group_keys, as_index=False)[metrics_list]
             .mean()
         )
     else:
@@ -173,18 +208,26 @@ def get_aggregated_df(
 
         agg_dict = {f"{metric}_w": "sum" for metric in metrics_list}
         agg_dict["weight"] = "sum"
-        agg_dict["preset"] = "first"
-        agg_dict["target_min"] = "first"
-        agg_dict["label"] = "first"
 
-        weighted_agg = weighted_df.groupby(["label", "target_min", "preset"], as_index=False).agg(agg_dict)
+        weighted_agg = weighted_df.groupby(group_keys, as_index=False).agg(agg_dict)
 
         for metric in metrics_list:
             weighted_agg[metric] = (weighted_agg[f"{metric}_w"] / weighted_agg["weight"])
             weighted_agg.drop(columns=[f"{metric}_w"], inplace=True)
 
-        df_avg = weighted_agg[["label", "target_min", "preset"] + metrics_list]
+        df_avg = weighted_agg[group_keys + metrics_list]
 
+    # Built once here, on the small post-aggregation frame, instead of on
+    # every raw row (see the note on _read_raw above).
+    df_avg["label"] = (
+        "Target: "
+        + df_avg["target_min"].astype(str)
+        + "-"
+        + df_avg["target_max"].astype(str)
+        + "\nPreset: "
+        + (df_avg["preset"] * 100).astype(int).astype(str)
+        + "%"
+    )
     df_avg["Target"] = df_avg["target_min"].astype(str) + "-" + (df_avg["target_min"] + 20).astype(str)
     df_avg["size"] = df_avg["preset"] * 100
     df_avg = df_avg.round(2)
@@ -201,6 +244,10 @@ server = app.server
 # simple in-process TTL cache to avoid external dependencies.
 # Note: this cache is per-process and will not be shared across multiple gunicorn
 # workers. For multi-worker deployments, use Redis/Memcached instead.
+# _SIMPLE_CACHE_MAXSIZE bounds it by entry count (on top of the TTL) so a
+# burst of distinct dropdown combinations within one 300s window can't grow
+# it unboundedly; oldest entries are evicted first.
+_SIMPLE_CACHE_MAXSIZE = 64
 _simple_cache = {}
 _simple_cache_lock = threading.Lock()
 
@@ -219,6 +266,9 @@ def cache_set(key, value, timeout=300):
     expires_at = time.time() + timeout if timeout else None
     with _simple_cache_lock:
         _simple_cache[key] = (expires_at, value)
+        while len(_simple_cache) > _SIMPLE_CACHE_MAXSIZE:
+            oldest_key = next(iter(_simple_cache))
+            del _simple_cache[oldest_key]
 
 app.layout = dbc.Container(
     [
