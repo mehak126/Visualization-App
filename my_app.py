@@ -126,7 +126,6 @@ def _read_raw(path):
     df = pd.read_csv(
         path, names=col_names, header=None, usecols=usecols, dtype=dtype_map
     )
-    df["activity"] = df["activity"].replace("rength training", "strength training")
     df["activity"] = df["activity"].astype("category")
     df["weight"] = lognorm.pdf(
         np.array(df["starting_glucose"]), s=sigma, scale=np.exp(mu)
